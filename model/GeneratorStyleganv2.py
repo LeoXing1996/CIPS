@@ -1,5 +1,4 @@
-__all__ = ['GeneratorOriginal',
-           ]
+__all__ = ['GeneratorOriginal']
 
 import math
 import random
@@ -7,7 +6,7 @@ import random
 import torch
 from torch import nn
 
-from .blocks import ConstantInput, StyledConv, ToRGB, PixelNorm, EqualLinear
+from .blocks import ConstantInput, EqualLinear, PixelNorm, StyledConv, ToRGB
 
 
 class GeneratorOriginal(nn.Module):
@@ -32,10 +31,10 @@ class GeneratorOriginal(nn.Module):
 
         for i in range(n_mlp):
             layers.append(
-                EqualLinear(
-                    style_dim, style_dim, lr_mul=lr_mlp, activation='fused_lrelu'
-                )
-            )
+                EqualLinear(style_dim,
+                            style_dim,
+                            lr_mul=lr_mlp,
+                            activation='fused_lrelu'))
 
         self.style = nn.Sequential(*layers)
 
@@ -52,9 +51,11 @@ class GeneratorOriginal(nn.Module):
         }
 
         self.input = ConstantInput(self.channels[4])
-        self.conv1 = StyledConv(
-            self.channels[4], self.channels[4], 3, style_dim, blur_kernel=blur_kernel
-        )
+        self.conv1 = StyledConv(self.channels[4],
+                                self.channels[4],
+                                3,
+                                style_dim,
+                                blur_kernel=blur_kernel)
         self.to_rgb1 = ToRGB(self.channels[4], style_dim, upsample=False)
 
         self.log_size = int(math.log(size, 2))
@@ -69,11 +70,12 @@ class GeneratorOriginal(nn.Module):
 
         for layer_idx in range(self.num_layers):
             res = (layer_idx + 5) // 2
-            shape = [1, 1, 2 ** res, 2 ** res]
-            self.noises.register_buffer(f'noise_{layer_idx}', torch.randn(*shape))
+            shape = [1, 1, 2**res, 2**res]
+            self.noises.register_buffer(f'noise_{layer_idx}',
+                                        torch.randn(*shape))
 
         for i in range(3, self.log_size + 1):
-            out_channel = self.channels[2 ** i]
+            out_channel = self.channels[2**i]
 
             self.convs.append(
                 StyledConv(
@@ -83,14 +85,14 @@ class GeneratorOriginal(nn.Module):
                     style_dim,
                     upsample=True,
                     blur_kernel=blur_kernel,
-                )
-            )
+                ))
 
             self.convs.append(
-                StyledConv(
-                    out_channel, out_channel, 3, style_dim, blur_kernel=blur_kernel
-                )
-            )
+                StyledConv(out_channel,
+                           out_channel,
+                           3,
+                           style_dim,
+                           blur_kernel=blur_kernel))
 
             self.to_rgbs.append(ToRGB(out_channel, style_dim))
 
@@ -101,18 +103,18 @@ class GeneratorOriginal(nn.Module):
     def make_noise(self):
         device = self.input.input.device
 
-        noises = [torch.randn(1, 1, 2 ** 2, 2 ** 2, device=device)]
+        noises = [torch.randn(1, 1, 2**2, 2**2, device=device)]
 
         for i in range(3, self.log_size + 1):
             for _ in range(2):
-                noises.append(torch.randn(1, 1, 2 ** i, 2 ** i, device=device))
+                noises.append(torch.randn(1, 1, 2**i, 2**i, device=device))
 
         return noises
 
     def mean_latent(self, n_latent):
-        latent_in = torch.randn(
-            n_latent, self.style_dim, device=self.input.input.device
-        )
+        latent_in = torch.randn(n_latent,
+                                self.style_dim,
+                                device=self.input.input.device)
         latent = self.style(latent_in).mean(0, keepdim=True)
 
         return latent
@@ -140,16 +142,16 @@ class GeneratorOriginal(nn.Module):
                 noise = [None] * self.num_layers
             else:
                 noise = [
-                    getattr(self.noises, f'noise_{i}') for i in range(self.num_layers)
+                    getattr(self.noises, f'noise_{i}')
+                    for i in range(self.num_layers)
                 ]
 
         if truncation < 1:
             style_t = []
 
             for style in styles:
-                style_t.append(
-                    truncation_latent + truncation * (style - truncation_latent)
-                )
+                style_t.append(truncation_latent + truncation *
+                               (style - truncation_latent))
 
             styles = style_t
 
@@ -170,7 +172,8 @@ class GeneratorOriginal(nn.Module):
                 inject_index = random.randint(1, self.n_latent - 1)
 
             latent = styles[0].unsqueeze(1).repeat(1, inject_index, 1)
-            latent2 = styles[1].unsqueeze(1).repeat(1, self.n_latent - inject_index, 1)
+            latent2 = styles[1].unsqueeze(1).repeat(
+                1, self.n_latent - inject_index, 1)
 
             latent = torch.cat([latent, latent2], 1)
 
@@ -181,8 +184,8 @@ class GeneratorOriginal(nn.Module):
 
         i = 1
         for conv1, conv2, noise1, noise2, to_rgb in zip(
-            self.convs[::2], self.convs[1::2], noise[1::2], noise[2::2], self.to_rgbs
-        ):
+                self.convs[::2], self.convs[1::2], noise[1::2], noise[2::2],
+                self.to_rgbs):
             out = conv1(out, latent[:, i], noise=noise1)
             out = conv2(out, latent[:, i + 1], noise=noise2)
             skip = to_rgb(out, latent[:, i + 2], skip)

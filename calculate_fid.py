@@ -1,10 +1,10 @@
 import argparse
 import os
 
+import numpy as np
 import torch
 import torchvision
 from torch_fidelity import calculate_metrics
-import numpy as np
 
 import model
 from dataset import ImageDataset
@@ -12,17 +12,36 @@ from tensor_transforms import convert_to_coord_format
 
 
 @torch.no_grad()
-def calculate_fid(model, fid_dataset, bs, size, num_batches, latent_size, integer_values,
-                  save_dir='fid_imgs', device='cuda'):
-    coords = convert_to_coord_format(bs, size, size, device, integer_values=integer_values)
+def calculate_fid(model,
+                  fid_dataset,
+                  bs,
+                  size,
+                  num_batches,
+                  latent_size,
+                  integer_values,
+                  save_dir='fid_imgs',
+                  device='cuda'):
+    coords = convert_to_coord_format(bs,
+                                     size,
+                                     size,
+                                     device,
+                                     integer_values=integer_values)
     for i in range(num_batches):
         z = torch.randn(bs, latent_size, device=device)
         fake_img, _ = model(coords, [z])
         for j in range(bs):
-            torchvision.utils.save_image(fake_img[j, :, :, :],
-                                         os.path.join(save_dir, '%s.png' % str(i * bs + j).zfill(5)), range=(-1, 1),
-                                         normalize=True)
-    metrics_dict = calculate_metrics(save_dir, fid_dataset, cuda=True, isc=False, fid=True, kid=False, verbose=False)
+            torchvision.utils.save_image(
+                fake_img[j, :, :, :],
+                os.path.join(save_dir, '%s.png' % str(i * bs + j).zfill(5)),
+                range=(-1, 1),
+                normalize=True)
+    metrics_dict = calculate_metrics(save_dir,
+                                     fid_dataset,
+                                     cuda=True,
+                                     isc=False,
+                                     fid=True,
+                                     kid=False,
+                                     verbose=False)
     return metrics_dict
 
 
@@ -58,15 +77,24 @@ if __name__ == '__main__':
 
     os.makedirs(args.generated_path, exist_ok=True)
 
-    transform_fid = torchvision.transforms.Compose([torchvision.transforms.ToTensor(),
-                                                    torchvision.transforms.Lambda(lambda x: x.mul_(255.).byte())])
-    dataset = ImageDataset(args.path, transform=transform_fid, resolution=args.coords_size, to_crop=args.to_crop)
+    transform_fid = torchvision.transforms.Compose([
+        torchvision.transforms.ToTensor(),
+        torchvision.transforms.Lambda(lambda x: x.mul_(255.).byte())
+    ])
+    dataset = ImageDataset(args.path,
+                           transform=transform_fid,
+                           resolution=args.coords_size,
+                           to_crop=args.to_crop)
     print('initial dataset length', dataset.length)
     dataset.length = args.fid_samples
 
     Generator = getattr(model, args.Generator)
-    generator = Generator(size=args.size, hidden_size=args.fc_dim, style_dim=args.latent, n_mlp=args.n_mlp,
-                          n_intermediate=args.n_intermediate, activation=args.activation).to(device)
+    generator = Generator(size=args.size,
+                          hidden_size=args.fc_dim,
+                          style_dim=args.latent,
+                          n_mlp=args.n_mlp,
+                          n_intermediate=args.n_intermediate,
+                          activation=args.activation).to(device)
 
     checkpoint = os.path.join(args.model_path, args.ckpt)
     ckpt = torch.load(checkpoint)
@@ -76,7 +104,7 @@ if __name__ == '__main__':
                                 fid_dataset=dataset,
                                 bs=args.batch,
                                 size=args.coords_size,
-                                num_batches=args.fid_samples//args.batch,
+                                num_batches=args.fid_samples // args.batch,
                                 latent_size=args.latent,
                                 integer_values=args.coords_integer_values,
                                 save_dir=args.generated_path)

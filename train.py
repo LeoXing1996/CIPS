@@ -1,22 +1,21 @@
 import argparse
 import math
-import random
 import os
+import random
 
 import numpy as np
 import torch
-from torch import nn, autograd, optim
+from torch import autograd, nn, optim
 from torch.nn import functional as F
 from torch.utils import data
-import torch.distributed as dist
-from torchvision import transforms, utils
 from torch.utils.tensorboard import SummaryWriter
+from torchvision import transforms, utils
 from tqdm import tqdm
 
 import model
-from dataset import MultiScaleDataset, ImageDataset
 from calculate_fid import calculate_fid
-from distributed import get_rank, synchronize, reduce_loss_dict
+from dataset import ImageDataset, MultiScaleDataset
+from distributed import get_rank, reduce_loss_dict, synchronize
 from tensor_transforms import convert_to_coord_format
 
 
@@ -58,9 +57,9 @@ def d_logistic_loss(real_pred, fake_pred):
 
 
 def d_r1_loss(real_pred, real_img):
-    grad_real, = autograd.grad(
-        outputs=real_pred.sum(), inputs=real_img, create_graph=True
-    )
+    grad_real, = autograd.grad(outputs=real_pred.sum(),
+                               inputs=real_img,
+                               create_graph=True)
     grad_penalty = grad_real.pow(2).view(grad_real.shape[0], -1).sum(1).mean()
 
     return grad_penalty
@@ -89,13 +88,17 @@ def mixing_noise(batch, latent_dim, prob, device):
         return [make_noise(batch, latent_dim, 1, device)]
 
 
-def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, device):
+def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema,
+          device):
     loader = sample_data(loader)
 
     pbar = range(args.iter)
 
     if get_rank() == 0:
-        pbar = tqdm(pbar, initial=args.start_iter, dynamic_ncols=True, smoothing=0.01)
+        pbar = tqdm(pbar,
+                    initial=args.start_iter,
+                    dynamic_ncols=True,
+                    smoothing=0.01)
 
     mean_path_length = 0
 
@@ -112,8 +115,8 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
     else:
         g_module = generator
         d_module = discriminator
-        
-    accum = 0.5 ** (32 / (10 * 1000))
+
+    accum = 0.5**(32 / (10 * 1000))
 
     sample_z = torch.randn(args.n_sample, args.latent, device=device)
 
@@ -137,7 +140,8 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
         noise = mixing_noise(args.batch, args.latent, args.mixing, device)
 
         fake_img, _ = generator(converted, noise)
-        fake = fake_img if args.img2dis else torch.cat([fake_img, converted], 1)
+        fake = fake_img if args.img2dis else torch.cat([fake_img, converted],
+                                                       1)
         fake_pred = discriminator(fake, key)
 
         real = real_img if args.img2dis else real_stack
@@ -160,7 +164,8 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
             r1_loss = d_r1_loss(real_pred, real)
 
             discriminator.zero_grad()
-            (args.r1 / 2 * r1_loss * args.d_reg_every + 0 * real_pred[0]).backward()
+            (args.r1 / 2 * r1_loss * args.d_reg_every +
+             0 * real_pred[0]).backward()
 
             d_optim.step()
 
@@ -172,7 +177,8 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
         noise = mixing_noise(args.batch, args.latent, args.mixing, device)
 
         fake_img, _ = generator(converted, noise)
-        fake = fake_img if args.img2dis else torch.cat([fake_img, converted], 1)
+        fake = fake_img if args.img2dis else torch.cat([fake_img, converted],
+                                                       1)
         fake_pred = discriminator(fake, key)
         g_loss = g_nonsaturating_loss(fake_pred)
 
@@ -198,34 +204,42 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
         path_length_val = loss_reduced['path_length'].mean().item()
 
         if get_rank() == 0:
-            pbar.set_description(
-                (
-                    f'd: {d_loss_val:.4f}; g: {g_loss_val:.4f}; r1: {r1_val:.4f}; '
-                    f'path: {path_loss_val:.4f}; mean path: {mean_path_length_avg:.4f}'
-                )
-            )
+            pbar.set_description((
+                f'd: {d_loss_val:.4f}; g: {g_loss_val:.4f}; r1: {r1_val:.4f}; '
+                f'path: {path_loss_val:.4f}; '
+                f'mean path: {mean_path_length_avg:.4f}'))
 
             if i % 100 == 0:
-                writer.add_scalar("Generator", g_loss_val, i)
-                writer.add_scalar("Discriminator", d_loss_val, i)
-                writer.add_scalar("R1", r1_val, i)
-                writer.add_scalar("Path Length Regularization", path_loss_val, i)
-                writer.add_scalar("Mean Path Length", mean_path_length, i)
-                writer.add_scalar("Real Score", real_score_val, i)
-                writer.add_scalar("Fake Score", fake_score_val, i)
-                writer.add_scalar("Path Length", path_length_val, i)
+                writer.add_scalar('Generator', g_loss_val, i)
+                writer.add_scalar('Discriminator', d_loss_val, i)
+                writer.add_scalar('R1', r1_val, i)
+                writer.add_scalar('Path Length Regularization', path_loss_val,
+                                  i)
+                writer.add_scalar('Mean Path Length', mean_path_length, i)
+                writer.add_scalar('Real Score', real_score_val, i)
+                writer.add_scalar('Fake Score', fake_score_val, i)
+                writer.add_scalar('Path Length', path_length_val, i)
 
             if i % 500 == 0:
                 with torch.no_grad():
                     g_ema.eval()
-                    converted_full = convert_to_coord_format(sample_z.size(0), args.size, args.size, device,
-                                                             integer_values=args.coords_integer_values)
+                    converted_full = convert_to_coord_format(
+                        sample_z.size(0),
+                        args.size,
+                        args.size,
+                        device,
+                        integer_values=args.coords_integer_values)
                     if args.generate_by_one:
-                        converted_full = convert_to_coord_format(1, args.size, args.size, device,
-                                                                 integer_values=args.coords_integer_values)
+                        converted_full = convert_to_coord_format(
+                            1,
+                            args.size,
+                            args.size,
+                            device,
+                            integer_values=args.coords_integer_values)
                         samples = []
                         for sz in sample_z:
-                            sample, _ = g_ema(converted_full, [sz.unsqueeze(0)])
+                            sample, _ = g_ema(converted_full,
+                                              [sz.unsqueeze(0)])
                             samples.append(sample)
                         sample = torch.cat(samples, 0)
                     else:
@@ -233,8 +247,9 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
 
                     utils.save_image(
                         sample,
-                        os.path.join(path, 'outputs', args.output_dir, 'images', f'{str(i).zfill(6)}.png'),
-                        nrow=int(args.n_sample ** 0.5),
+                        os.path.join(path, 'outputs', args.output_dir,
+                                     'images', f'{str(i).zfill(6)}.png'),
+                        nrow=int(args.n_sample**0.5),
                         normalize=True,
                         range=(-1, 1),
                     )
@@ -243,9 +258,10 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
                         utils.save_image(
                             fake_img,
                             os.path.join(
-                                path,
-                                f'outputs/{args.output_dir}/images/fake_patch_{str(key)}_{str(i).zfill(6)}.png'),
-                            nrow=int(fake_img.size(0) ** 0.5),
+                                path, f'outputs/{args.output_dir}/images/'
+                                f'fake_patch_{str(key)}_{str(i).zfill(6)}.png'
+                            ),
+                            nrow=int(fake_img.size(0)**0.5),
                             normalize=True,
                             range=(-1, 1),
                         )
@@ -253,9 +269,9 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
                         utils.save_image(
                             real_img,
                             os.path.join(
-                                path,
-                                f'outputs/{args.output_dir}/images/real_patch_{str(key)}_{str(i).zfill(6)}.png'),
-                            nrow=int(real_img.size(0) ** 0.5),
+                                path, f'outputs/{args.output_dir}/images/'
+                                'real_patch_{str(key)}_{str(i).zfill(6)}.png'),
+                            nrow=int(real_img.size(0)**0.5),
                             normalize=True,
                             range=(-1, 1),
                         )
@@ -270,15 +286,22 @@ def train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, devic
                         'd_optim': d_optim.state_dict(),
                     },
                     os.path.join(
-                        path,
-                        f'outputs/{args.output_dir}/checkpoints/{str(i).zfill(6)}.pt'),
+                        path, f'outputs/{args.output_dir}/checkpoints/'
+                        f'{str(i).zfill(6)}.pt'),
                 )
                 if i > 0:
-                    cur_metrics = calculate_fid(g_ema, fid_dataset=fid_dataset, bs=args.fid_batch, size=args.coords_size,
-                                                num_batches=args.fid_samples//args.fid_batch, latent_size=args.latent,
-                                                save_dir=args.path_fid, integer_values=args.coords_integer_values)
-                    writer.add_scalar("fid", cur_metrics['frechet_inception_distance'], i)
-                    print(i, "fid",  cur_metrics['frechet_inception_distance'])
+                    cur_metrics = calculate_fid(
+                        g_ema,
+                        fid_dataset=fid_dataset,
+                        bs=args.fid_batch,
+                        size=args.coords_size,
+                        num_batches=args.fid_samples // args.fid_batch,
+                        latent_size=args.latent,
+                        save_dir=args.path_fid,
+                        integer_values=args.coords_integer_values)
+                    writer.add_scalar(
+                        'fid', cur_metrics['frechet_inception_distance'], i)
+                    print(i, 'fid', cur_metrics['frechet_inception_distance'])
 
 
 if __name__ == '__main__':
@@ -325,7 +348,7 @@ if __name__ == '__main__':
     parser.add_argument('--Discriminator', type=str, default='Discriminator')
     parser.add_argument('--d_reg_every', type=int, default=16)
     parser.add_argument('--r1', type=float, default=10)
-    parser.add_argument('--img2dis',  action='store_true')
+    parser.add_argument('--img2dis', action='store_true')
     parser.add_argument('--n_first_layers', type=int, default=0)
 
     args = parser.parse_args()
@@ -336,8 +359,10 @@ if __name__ == '__main__':
     Discriminator = getattr(model, args.Discriminator)
     print('Discriminator', Discriminator)
 
-    os.makedirs(os.path.join(path, 'outputs', args.output_dir, 'images'), exist_ok=True)
-    os.makedirs(os.path.join(path, 'outputs', args.output_dir, 'checkpoints'), exist_ok=True)
+    os.makedirs(os.path.join(path, 'outputs', args.output_dir, 'images'),
+                exist_ok=True)
+    os.makedirs(os.path.join(path, 'outputs', args.output_dir, 'checkpoints'),
+                exist_ok=True)
     args.logdir = os.path.join(path, 'tensorboard', args.output_dir)
     os.makedirs(args.logdir, exist_ok=True)
     args.path_fid = os.path.join(path, 'fid', args.output_dir)
@@ -348,7 +373,8 @@ if __name__ == '__main__':
 
     if args.distributed:
         torch.cuda.set_device(args.local_rank)
-        torch.distributed.init_process_group(backend='nccl', init_method='env://')
+        torch.distributed.init_process_group(backend='nccl',
+                                             init_method='env://')
         synchronize()
 
     args.n_mlp = 8
@@ -356,21 +382,35 @@ if __name__ == '__main__':
     print('img2dis', args.img2dis, 'dis_input_size', args.dis_input_size)
 
     args.start_iter = 0
-    n_scales = int(math.log(args.size//args.crop, 2)) + 1
+    n_scales = int(math.log(args.size // args.crop, 2)) + 1
     print('n_scales', n_scales)
 
-    generator = Generator(size=args.size, hidden_size=args.fc_dim, style_dim=args.latent, n_mlp=args.n_mlp,
-                          activation=args.activation, channel_multiplier=args.channel_multiplier,
-                          ).to(device)
+    generator = Generator(
+        size=args.size,
+        hidden_size=args.fc_dim,
+        style_dim=args.latent,
+        n_mlp=args.n_mlp,
+        activation=args.activation,
+        channel_multiplier=args.channel_multiplier,
+    ).to(device)
 
-    print('generator N params', sum(p.numel() for p in generator.parameters() if p.requires_grad))
+    print('generator N params',
+          sum(p.numel() for p in generator.parameters() if p.requires_grad))
     discriminator = Discriminator(
-        size=args.crop, channel_multiplier=args.channel_multiplier, n_scales=n_scales, input_size=args.dis_input_size,
+        size=args.crop,
+        channel_multiplier=args.channel_multiplier,
+        n_scales=n_scales,
+        input_size=args.dis_input_size,
         n_first_layers=args.n_first_layers,
     ).to(device)
-    g_ema = Generator(size=args.size, hidden_size=args.fc_dim, style_dim=args.latent, n_mlp=args.n_mlp,
-                      activation=args.activation, channel_multiplier=args.channel_multiplier,
-                      ).to(device)
+    g_ema = Generator(
+        size=args.size,
+        hidden_size=args.fc_dim,
+        style_dim=args.latent,
+        n_mlp=args.n_mlp,
+        activation=args.activation,
+        channel_multiplier=args.channel_multiplier,
+    ).to(device)
     g_ema.eval()
     accumulate(g_ema, generator, 0)
 
@@ -380,12 +420,12 @@ if __name__ == '__main__':
     g_optim = optim.Adam(
         generator.parameters(),
         lr=args.lr * g_reg_ratio,
-        betas=(0 ** g_reg_ratio, 0.99 ** g_reg_ratio),
+        betas=(0**g_reg_ratio, 0.99**g_reg_ratio),
     )
     d_optim = optim.Adam(
         discriminator.parameters(),
         lr=args.lr * d_reg_ratio,
-        betas=(0 ** d_reg_ratio, 0.99 ** d_reg_ratio),
+        betas=(0**d_reg_ratio, 0.99**d_reg_ratio),
     )
 
     if args.ckpt is not None:
@@ -425,25 +465,33 @@ if __name__ == '__main__':
             broadcast_buffers=False,
         )
 
-    transform = transforms.Compose(
-        [
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5), inplace=True),
-        ]
-    )
+    transform = transforms.Compose([
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5), inplace=True),
+    ])
     transform_fid = transforms.Compose([
-                                       transforms.ToTensor(),
-                                       transforms.Lambda(lambda x: x.mul_(255.).byte())])
+        transforms.ToTensor(),
+        transforms.Lambda(lambda x: x.mul_(255.).byte())
+    ])
 
-    dataset = MultiScaleDataset(args.path, transform=transform, resolution=args.coords_size, crop_size=args.crop,
-                                integer_values=args.coords_integer_values, to_crop=args.to_crop)
-    fid_dataset = ImageDataset(args.path, transform=transform_fid, resolution=args.coords_size, to_crop=args.to_crop)
+    dataset = MultiScaleDataset(args.path,
+                                transform=transform,
+                                resolution=args.coords_size,
+                                crop_size=args.crop,
+                                integer_values=args.coords_integer_values,
+                                to_crop=args.to_crop)
+    fid_dataset = ImageDataset(args.path,
+                               transform=transform_fid,
+                               resolution=args.coords_size,
+                               to_crop=args.to_crop)
     fid_dataset.length = args.fid_samples
     loader = data.DataLoader(
         dataset,
         batch_size=args.batch,
-        sampler=data_sampler(dataset, shuffle=True, distributed=args.distributed),
+        sampler=data_sampler(dataset,
+                             shuffle=True,
+                             distributed=args.distributed),
         drop_last=True,
         num_workers=args.num_workers,
         pin_memory=True,
@@ -451,4 +499,5 @@ if __name__ == '__main__':
 
     writer = SummaryWriter(log_dir=args.logdir)
 
-    train(args, loader, generator, discriminator, g_optim, d_optim, g_ema, device)
+    train(args, loader, generator, discriminator, g_optim, d_optim, g_ema,
+          device)
